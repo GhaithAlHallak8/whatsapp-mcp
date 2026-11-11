@@ -5,6 +5,7 @@ import tempfile
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP, Image
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 import media_preview
@@ -69,6 +70,11 @@ from whatsapp import (
 # so importing this module never parses env vars or exits the process.
 mcp = FastMCP("whatsapp")
 
+READ_TOOL = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+LOCAL_WRITE_TOOL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+SEND_TOOL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
+MARK_READ_TOOL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
+
 PreviewDimension = Annotated[
     int,
     Field(
@@ -80,7 +86,7 @@ PreviewDimension = Annotated[
 ]
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def search_contacts(query: str) -> list[dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number.
@@ -92,7 +98,7 @@ def search_contacts(query: str) -> list[dict[str, Any]]:
     return contacts
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def get_contact(
     identifier: str | None = None,
@@ -184,7 +190,7 @@ def get_contact(
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def list_messages(
     after: str | None = None,
@@ -241,7 +247,7 @@ def list_messages(
     return messages
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def list_chats(
     query: str | None = None,
@@ -276,7 +282,7 @@ def list_chats(
     return chats
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def get_chat(chat_jid: str, include_last_message: bool = True) -> dict[str, Any]:
     """Get WhatsApp chat metadata by JID.
@@ -292,7 +298,7 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> dict[str, Any]
     return chat
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def get_direct_chat_by_contact(sender_phone_number: str) -> dict[str, Any]:
     """Get WhatsApp chat metadata by sender phone number.
@@ -304,7 +310,7 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> dict[str, Any]:
     return chat
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> list[dict[str, Any]]:
     """Get all WhatsApp chats involving the contact.
@@ -320,7 +326,7 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> list[dict[str
     return chats
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def get_last_interaction(jid: str) -> dict[str, Any]:
     """Get most recent WhatsApp message involving the contact.
@@ -335,7 +341,7 @@ def get_last_interaction(jid: str) -> dict[str, Any]:
     return message if message else {}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def get_message_context(message_id: str, before: int = 5, after: int = 5) -> dict[str, Any]:
     """Get context around a specific WhatsApp message.
@@ -353,7 +359,7 @@ def get_message_context(message_id: str, before: int = 5, after: int = 5) -> dic
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=SEND_TOOL)
 @oauth.guarded("send")
 def send_message(
     recipient: str,
@@ -394,7 +400,7 @@ def send_message(
     return {"success": success, "message": status_message}
 
 
-@mcp.tool()
+@mcp.tool(annotations=SEND_TOOL)
 @oauth.guarded("send")
 def send_reaction(
     recipient: str,
@@ -421,7 +427,7 @@ def send_reaction(
     return {"success": success, "message": status_message}
 
 
-@mcp.tool()
+@mcp.tool(annotations=MARK_READ_TOOL)
 @oauth.guarded("send")
 def mark_messages_read(
     message_ids: list[str],
@@ -447,7 +453,7 @@ def mark_messages_read(
     return {"success": success, "message": status_message}
 
 
-@mcp.tool()
+@mcp.tool(annotations=SEND_TOOL)
 @oauth.guarded("send")
 def send_file(recipient: str, media_path: str, caption: str = "") -> dict[str, Any]:
     """Send a file (image, video, document) via WhatsApp, optionally with a caption.
@@ -472,7 +478,7 @@ def send_file(recipient: str, media_path: str, caption: str = "") -> dict[str, A
     return {"success": success, "message": status_message}
 
 
-@mcp.tool()
+@mcp.tool(annotations=SEND_TOOL)
 @oauth.guarded("send")
 def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     """Send any audio file as a WhatsApp audio message to the specified recipient. For group messages use the JID. If it errors due to ffmpeg not being installed, use send_file instead.
@@ -489,7 +495,7 @@ def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     return {"success": success, "message": status_message}
 
 
-@mcp.tool()
+@mcp.tool(annotations=LOCAL_WRITE_TOOL)
 @oauth.guarded("read")
 def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
     """Download media from a WhatsApp message and get the local file path.
@@ -511,7 +517,7 @@ def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
         return {"success": False, "message": detail or "Failed to download media"}
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_TOOL)
 @oauth.guarded("read")
 def view_media(
     message_id: str,
@@ -553,7 +559,7 @@ def view_media(
     return Image(data=data, format=image_format)
 
 
-@mcp.tool()
+@mcp.tool(annotations=LOCAL_WRITE_TOOL)
 @oauth.guarded("read")
 def transcribe_audio(message_id: str, chat_jid: str, force: bool = False) -> dict[str, Any]:
     """Transcribe a WhatsApp voice note and return its text.
