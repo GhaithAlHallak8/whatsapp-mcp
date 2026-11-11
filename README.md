@@ -940,6 +940,10 @@ Caveats:
   message first.
 - Messages the phone has deleted are not recoverable, as above.
 
+The same request is available to AI clients as the `backfill_chat` tool, which
+repeats it until a given date is covered (`until`), the phone returns nothing
+more, or `max_rounds` is reached.
+
 ## Call History
 
 The bridge captures incoming WhatsApp voice and video calls live into a

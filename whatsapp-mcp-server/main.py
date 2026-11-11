@@ -18,6 +18,9 @@ from whatsapp import (
     msg_to_dict,
 )
 from whatsapp import (
+    backfill_chat as whatsapp_backfill_chat,
+)
+from whatsapp import (
     download_media as whatsapp_download_media,
 )
 from whatsapp import (
@@ -493,6 +496,28 @@ def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     """
     success, status_message = whatsapp_audio_voice_message(recipient, media_path)
     return {"success": success, "message": status_message}
+
+
+@mcp.tool(annotations=LOCAL_WRITE_TOOL)
+@oauth.guarded("read")
+def backfill_chat(chat_jid: str, until: str | None = None, max_rounds: int = 5) -> dict[str, Any]:
+    """Fetch older history for one chat from the user's phone.
+
+    Use this when list_messages shows a chat's history starting later than the
+    period you need. Only messages that already exist on the phone can be
+    fetched, the phone must be online, and it decides how much each round
+    returns (often about 50 messages). Nothing is sent to the chat.
+
+    Args:
+        chat_jid: The chat to backfill (e.g. "12025551234@s.whatsapp.net" or a group JID)
+        until: ISO-8601 date to reach back to (e.g. "2026-10-31"). Omit to fetch max_rounds batches
+        max_rounds: Maximum requests to the phone in this call (default 5, max 20)
+
+    Returns:
+        A dictionary with success, a message saying why it stopped, rounds used, messages_added,
+        and the oldest stored timestamp before and after. Call again to go further back.
+    """
+    return whatsapp_backfill_chat(chat_jid, until=until, max_rounds=max_rounds)
 
 
 @mcp.tool(annotations=LOCAL_WRITE_TOOL)

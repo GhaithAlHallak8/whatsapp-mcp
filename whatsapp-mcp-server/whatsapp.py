@@ -2,6 +2,7 @@ import json
 import os
 import os.path
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -1429,3 +1430,92 @@ def download_media(message_id: str, chat_jid: str) -> str | None:
     if path is None:
         print(f"Download failed: {message}")
     return path
+
+
+HISTORY_POLL_SECONDS = 1.0
+HISTORY_WAIT_SECONDS = 15.0
+HISTORY_REQUEST_COUNT = 500
+HISTORY_MAX_ROUNDS = 20
+
+
+def chat_history_bounds(chat_jid: str) -> tuple[int, datetime | None]:
+    """Return (stored message count, oldest stored timestamp) for a chat."""
+    conn = _connect_messages_db()
+    try:
+        row = conn.execute("SELECT COUNT(*), MIN(timestamp) FROM messages WHERE chat_jid = ?", (chat_jid,)).fetchone()
+    finally:
+        conn.close()
+    count, oldest = row[0], row[1]
+    return count, datetime.fromisoformat(oldest) if oldest else None
+
+
+def request_chat_history(chat_jid: str, count: int = HISTORY_REQUEST_COUNT) -> tuple[bool, str]:
+    """Ask the bridge to request older messages for a chat from the phone."""
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/history",
+            json={"chat_jid": chat_jid, "count": count},
+            headers=_bridge_headers(),
+        )
+        try:
+            result = response.json()
+        except ValueError:
+            result = None
+        if not isinstance(result, dict):
+            return False, f"Bridge returned HTTP {response.status_code}"
+        return bool(result.get("success")) and response.status_code == 200, str(result.get("message") or "")
+    except requests.RequestException as e:
+        return False, f"Could not reach the WhatsApp bridge ({type(e).__name__})"
+
+
+def _as_aware(value: datetime) -> datetime:
+    return value if value.tzinfo else value.astimezone()
+
+
+def backfill_chat(chat_jid: str, until: str | None = None, max_rounds: int = 5) -> dict[str, Any]:
+    """Pull older messages for one chat from the phone until a date is covered.
+
+    Each round asks the phone for messages older than the oldest one stored and
+    waits for them to land in messages.db. It stops when `until` is covered, the
+    phone returns nothing more, or max_rounds is reached.
+    """
+    target = None
+    if until:
+        try:
+            target = _as_aware(datetime.fromisoformat(until))
+        except ValueError:
+            raise ValueError(f"Invalid date format for 'until': {until}. Please use ISO-8601 format.") from None
+    max_rounds = max(1, min(max_rounds, HISTORY_MAX_ROUNDS))
+    start_count, start_oldest = chat_history_bounds(chat_jid)
+    count, oldest = start_count, start_oldest
+    rounds = 0
+
+    def covered() -> bool:
+        return bool(target and oldest and _as_aware(oldest) <= target)
+
+    def summary(success: bool, message: str) -> dict[str, Any]:
+        return {
+            "success": success,
+            "message": message,
+            "rounds": rounds,
+            "messages_added": count - start_count,
+            "oldest_before": start_oldest.isoformat() if start_oldest else None,
+            "oldest_after": oldest.isoformat() if oldest else None,
+        }
+
+    while rounds < max_rounds and not covered():
+        ok, message = request_chat_history(chat_jid)
+        if not ok:
+            return summary(False, message or "The bridge refused the history request")
+        rounds += 1
+        deadline = time.monotonic() + HISTORY_WAIT_SECONDS
+        new_count, new_oldest = count, oldest
+        while new_count <= count and time.monotonic() < deadline:
+            time.sleep(HISTORY_POLL_SECONDS)
+            new_count, new_oldest = chat_history_bounds(chat_jid)
+        if new_count <= count:
+            return summary(True, "The phone returned no older messages (it may be offline, or this is all it has)")
+        count, oldest = new_count, new_oldest
+    if covered():
+        return summary(True, "History now covers the requested date")
+    return summary(True, "Reached max_rounds; call again to go further back")
