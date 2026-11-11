@@ -191,6 +191,7 @@ def list_messages(
     context_before: int = 1,
     context_after: int = 1,
     sort_by: str = "newest",
+    media_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Get WhatsApp messages matching specified criteria with optional context.
 
@@ -208,6 +209,10 @@ def list_messages(
         context_before: Messages to include before each match (default 1)
         context_after: Messages to include after each match (default 1)
         sort_by: "newest" (default, most recent first) or "oldest" (chronological)
+        media_type: Only messages of this media type: "image", "video", "audio", "document" or
+            "sticker". Use "audio" for voice notes; their transcripts, when stored, are in content.
+            Read state is tracked per chat, not per message, so "unread voice notes" can only be
+            approximated by combining this with a chat's unread count and a date range.
     """
     # Cap limit at 500 to prevent excessive queries
     limit = max(1, min(limit, 500))
@@ -224,6 +229,7 @@ def list_messages(
         context_before=context_before,
         context_after=context_after,
         sort_by=sort_by,
+        media_type=media_type,
     )
     return messages
 

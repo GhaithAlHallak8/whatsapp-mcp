@@ -335,10 +335,14 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 	} else if mediaType != "" && url != "" && len(mediaKey) > 0 && stored && shouldDownload {
 		// Media that is not included in a webhook payload: async download for caching.
 		logger.Infof("Auto-downloading %s media for message %s", mediaType, msg.Info.ID)
+		voiceNote := unwrapMessageContent(msg.Message).GetAudioMessage().GetPTT()
 		scheduleMediaDownload(func() {
 			success, _, _, downloadPath, err := downloadMediaForMessage(client, messageStore, msg.Info.ID, chatJID)
 			if success && err == nil {
 				logger.Infof("✅ Auto-downloaded media: %s", downloadPath)
+				if mediaType == "audio" {
+					autoTranscribe.offer(msg.Info.ID, chatJID, downloadPath, voiceNote)
+				}
 			} else {
 				logger.Warnf("❌ Auto-download failed: %v", err)
 			}

@@ -35,6 +35,10 @@ WHISPER_BINARY = "whisper-cli"
 TARGET_SAMPLE_RATE = "16000"
 TRANSCRIPTION_TIMEOUT = 300
 
+HTTP_PROVIDERS = frozenset({"openai_compatible", "elevenlabs"})
+ELEVENLABS_URL = "https://api.elevenlabs.io/v1/speech-to-text"
+ELEVENLABS_MODEL = "scribe_v2"
+
 
 class TranscriptionError(RuntimeError):
     """Transcription could not run, with a reason worth showing the caller."""
@@ -77,8 +81,8 @@ def language() -> str:
 
 def provider_name() -> str:
     provider = os.getenv("WHATSAPP_TRANSCRIPTION_PROVIDER", "whisper_cpp").strip() or "whisper_cpp"
-    if provider not in {"whisper_cpp", "openai_compatible"}:
-        raise TranscriptionError("WHATSAPP_TRANSCRIPTION_PROVIDER must be whisper_cpp or openai_compatible")
+    if provider not in {"whisper_cpp", *HTTP_PROVIDERS}:
+        raise TranscriptionError("WHATSAPP_TRANSCRIPTION_PROVIDER must be whisper_cpp, openai_compatible or elevenlabs")
     return provider
 
 
@@ -86,6 +90,8 @@ def configured_model(provider: str) -> str:
     if provider == "whisper_cpp":
         return model_path()
     model = os.getenv("WHATSAPP_TRANSCRIPTION_MODEL", "").strip()
+    if not model and provider == "elevenlabs":
+        return ELEVENLABS_MODEL
     if not model:
         raise TranscriptionError("Set WHATSAPP_TRANSCRIPTION_MODEL to the model ID served by your endpoint")
     return model
@@ -97,8 +103,11 @@ def label(model: str, provider: str = "whisper_cpp") -> str:
     return f"{TRANSCRIPT_MARKER} ({source})] "
 
 
-def transcribe_http(source: Path, model: str) -> str:
+def transcribe_http(source: Path, model: str, provider: str = "openai_compatible") -> str:
+    elevenlabs = provider == "elevenlabs"
     url = os.getenv("WHATSAPP_TRANSCRIPTION_URL", "").strip()
+    if elevenlabs and not url:
+        url = ELEVENLABS_URL
     try:
         parsed = urlsplit(url)
         valid = parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password
@@ -108,12 +117,21 @@ def transcribe_http(source: Path, model: str) -> str:
         raise TranscriptionError(
             "Set WHATSAPP_TRANSCRIPTION_URL to a full HTTP(S) transcription endpoint without credentials"
         )
-    data = {"model": model, "response_format": "json"}
     lang = os.getenv("WHATSAPP_TRANSCRIPTION_LANGUAGE", "auto").strip()
-    if lang and lang != "auto":
-        data["language"] = lang
-    key = os.getenv("WHATSAPP_TRANSCRIPTION_API_KEY", "").strip()
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    if elevenlabs:
+        key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+        if not key:
+            raise TranscriptionError("Set ELEVENLABS_API_KEY to use the elevenlabs transcription provider")
+        data = {"model_id": model, "tag_audio_events": "false"}
+        if lang and lang != "auto":
+            data["language_code"] = lang
+        headers = {"xi-api-key": key}
+    else:
+        data = {"model": model, "response_format": "json"}
+        if lang and lang != "auto":
+            data["language"] = lang
+        key = os.getenv("WHATSAPP_TRANSCRIPTION_API_KEY", "").strip()
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         with requests.Session() as session, source.open("rb") as audio:
             # Ambient proxies can send even loopback uploads off-machine, and
@@ -181,8 +199,8 @@ def transcribe_file(
     source = Path(path)
     if not source.is_file():
         raise TranscriptionError(f"Audio file not found: {source}")
-    if provider == "openai_compatible":
-        return transcribe_http(source, model or configured_model(provider))
+    if provider in HTTP_PROVIDERS:
+        return transcribe_http(source, model or configured_model(provider), provider)
     if not ffmpeg_available():
         raise TranscriptionError("FFmpeg is required to decode voice notes for transcription")
     if not whisper_available():

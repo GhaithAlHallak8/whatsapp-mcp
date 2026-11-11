@@ -215,6 +215,13 @@ func main() {
 	}
 	defer func() { _ = messageStore.Close() }()
 
+	autoTranscribe, err = startAutoTranscriber(os.Getenv, messageStore)
+	if err != nil {
+		logger.Errorf("Auto-transcription disabled: %v", err)
+	} else if autoTranscribe != nil {
+		logger.Infof("Auto-transcribing %s messages with %s", autoTranscribe.cfg.mode, autoTranscribe.engine.Source())
+	}
+
 	if err := messageStore.MigrateLegacyLIDChatsToPhoneJIDs("store/whatsapp.db", logger); err != nil {
 		logger.Errorf("Failed to migrate legacy LID chat rows: %v", err)
 		return

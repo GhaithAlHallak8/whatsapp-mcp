@@ -355,6 +355,57 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 	}))
 
 	// Handler for sending typing indicator
+	mux.HandleFunc("/api/transcribe/backfill", auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if autoTranscribe == nil {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "Auto-transcription is off. Set WHATSAPP_AUTO_TRANSCRIBE to voice or audio."})
+			return
+		}
+		var req struct {
+			After   string `json:"after"`
+			Before  string `json:"before"`
+			ChatJID string `json:"chat_jid"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request format", http.StatusBadRequest)
+			return
+		}
+		after, err := time.Parse(time.RFC3339, req.After)
+		if err != nil {
+			http.Error(w, "after must be an RFC 3339 timestamp", http.StatusBadRequest)
+			return
+		}
+		before := time.Now()
+		if req.Before != "" {
+			if before, err = time.Parse(time.RFC3339, req.Before); err != nil {
+				http.Error(w, "before must be an RFC 3339 timestamp", http.StatusBadRequest)
+				return
+			}
+		}
+		refs, err := messageStore.UntranscribedAudio(after, before, req.ChatJID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "Failed to list audio messages"})
+			return
+		}
+		go autoTranscribe.backfill(refs, func(messageID, chatJID string) (string, error) {
+			success, _, _, path, err := downloadMediaForMessage(client, messageStore, messageID, chatJID)
+			if err != nil {
+				return "", err
+			}
+			if !success {
+				return "", fmt.Errorf("download failed")
+			}
+			return path, nil
+		})
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "candidates": len(refs)})
+	}))
+
 	mux.HandleFunc("/api/typing", auth(func(w http.ResponseWriter, r *http.Request) {
 		// Only allow POST requests
 		if r.Method != http.MethodPost {

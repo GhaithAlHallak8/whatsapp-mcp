@@ -377,6 +377,39 @@ after 300 seconds, and local FFmpeg decoding after 60 seconds.
 Stored transcripts are reused across provider changes unless `force=true`.
 Cache reads and writes use both message ID and chat JID.
 
+**ElevenLabs Scribe.** Set `WHATSAPP_TRANSCRIPTION_PROVIDER=elevenlabs` and
+`ELEVENLABS_API_KEY`. The model defaults to `scribe_v2`
+(`WHATSAPP_TRANSCRIPTION_MODEL` overrides it) and
+`WHATSAPP_TRANSCRIPTION_LANGUAGE` is sent as `language_code`. Audio is uploaded
+to ElevenLabs and billed per audio minute.
+
+**Automatic transcription.** `transcribe_audio` only runs when a client calls
+it. To have transcripts ready before anyone asks, let the bridge transcribe
+audio as it arrives:
+
+```env
+WHATSAPP_AUTO_TRANSCRIBE=voice
+```
+
+`voice` covers voice notes, `audio` covers every audio message, `off` is the
+default. The bridge uses the same provider settings as the tool, transcribes
+one file at a time after the automatic download finishes
+(`WHATSAPP_AUTO_DOWNLOAD_MEDIA` must stay on), and writes the result into the
+message's empty `content` with the same prefix, so `list_messages` and its
+`query` search see it and `transcribe_audio` reuses it. A failed job is tried
+three times, then left for `transcribe_audio` to handle on demand.
+
+- `WHATSAPP_AUTO_TRANSCRIBE_MAX_SECONDS` skips recordings longer than the cap.
+- `WHATSAPP_AUTO_TRANSCRIBE_CHATS` (allow list) and
+  `WHATSAPP_AUTO_TRANSCRIBE_EXCLUDE_CHATS` take comma-separated chat JIDs.
+- `POST /api/transcribe/backfill` with `{"after": "<RFC 3339>", "before":
+  "<RFC 3339>", "chat_jid": "<optional>"}` queues older audio that has no
+  transcript. The bridge does not record whether old audio was a voice note,
+  so backfill covers all audio in the range.
+
+`list_messages` accepts `media_type` (for example `audio`) to fetch only voice
+notes and other audio.
+
 **Parameters:**
 
 - `message_id` (required): ID of the message with the voice note

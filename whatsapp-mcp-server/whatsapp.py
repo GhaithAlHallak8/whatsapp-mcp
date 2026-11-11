@@ -519,6 +519,7 @@ def list_messages(
     context_before: int = 1,
     context_after: int = 1,
     sort_by: str = "newest",
+    media_type: str | None = None,
 ) -> list[dict[str, Any]]:
     """Get messages matching the specified criteria with optional context.
 
@@ -534,6 +535,7 @@ def list_messages(
         context_before: Number of messages to include before each match (default 1)
         context_after: Number of messages to include after each match (default 1)
         sort_by: Sort order - "newest" (default) or "oldest" for chronological ordering
+        media_type: Optional media type to filter by (image, video, audio, document, sticker)
 
     Returns:
         List of message dictionaries with id, timestamp, sender, content, etc.
@@ -578,6 +580,10 @@ def list_messages(
         if chat_jid:
             where_clauses.append("messages.chat_jid = ?")
             params.append(chat_jid)
+
+        if media_type:
+            where_clauses.append("messages.media_type = ?")
+            params.append(media_type.strip().lower())
 
         if query:
             # SQLite's LOWER() only handles ASCII, so LIKE LOWER(...) silently

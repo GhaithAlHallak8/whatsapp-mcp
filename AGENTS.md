@@ -26,6 +26,8 @@ whatsapp-mcp/
 │   ├── media.go            # Media download, Ogg/Opus analysis
 │   ├── content.go          # Text, contact, quote, mention extraction
 │   ├── ephemeral.go        # Disappearing messages, revokes
+│   ├── transcribe_auto.go  # Auto-transcription queue and backfill
+│   ├── internal/transcribe # Transcription engines (whisper.cpp, OpenAI-compatible, ElevenLabs)
 │   ├── webhook.go          # Outgoing webhook for incoming messages
 │   └── store/              # SQLite (whatsapp.db, messages.db) + media — gitignored
 ├── whatsapp-mcp-server/    # Python MCP server — exposes tools to AI clients
@@ -104,11 +106,16 @@ For PR creation, hosted review, CI, and merge readiness, use the installed `baby
 | `WHATSAPP_PARENT_WATCHDOG_S` | `30` | Stdio parent-liveness poll interval (seconds). Exits when the original parent is gone (POSIX reparent). Soft stdin EOF alone does not exit. |
 | `WHISPER_MODEL` | unset | Required model-file path for default whisper.cpp transcription |
 | `WHISPER_LANGUAGE` | `auto` | Language for whisper.cpp transcription |
-| `WHATSAPP_TRANSCRIPTION_PROVIDER` | `whisper_cpp` | `whisper_cpp` or `openai_compatible`; transcription is opt-in via the tool |
+| `WHATSAPP_TRANSCRIPTION_PROVIDER` | `whisper_cpp` | `whisper_cpp`, `openai_compatible` or `elevenlabs`; used by the tool and by bridge auto-transcription |
 | `WHATSAPP_TRANSCRIPTION_URL` | unset | Required full HTTP(S) endpoint for `openai_compatible`; audio is uploaded here, use loopback to keep it local |
 | `WHATSAPP_TRANSCRIPTION_MODEL` | unset | Required model ID for the HTTP provider (e.g. `parakeet`) |
 | `WHATSAPP_TRANSCRIPTION_LANGUAGE` | `auto` | HTTP provider language; `auto` omits the language field |
 | `WHATSAPP_TRANSCRIPTION_API_KEY` | unset | Optional bearer token for the HTTP provider |
+| `ELEVENLABS_API_KEY` | unset | Required for the `elevenlabs` provider; audio is uploaded to ElevenLabs. Model defaults to `scribe_v2` |
+| `WHATSAPP_AUTO_TRANSCRIBE` | `off` | Bridge transcribes incoming audio after download: `off`, `voice` (voice notes only) or `audio` |
+| `WHATSAPP_AUTO_TRANSCRIBE_MAX_SECONDS` | `0` | Skip auto-transcription of recordings longer than this (0 = no cap) |
+| `WHATSAPP_AUTO_TRANSCRIBE_CHATS` | unset | Comma-separated chat JIDs; when set, only these chats are auto-transcribed |
+| `WHATSAPP_AUTO_TRANSCRIBE_EXCLUDE_CHATS` | unset | Comma-separated chat JIDs never auto-transcribed |
 
 When adding a new env var: document it here, in `README.md`, and in `.env.example`.
 

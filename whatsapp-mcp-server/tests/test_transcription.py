@@ -331,3 +331,34 @@ def test_http_ignores_ambient_credentials_and_proxies(tmp_path, monkeypatch):
 
     monkeypatch.setattr(transcription.requests.Session, "send", send)
     assert transcription.transcribe_http(audio, "parakeet") == "hello"
+
+
+def test_elevenlabs_upload_contract(http_provider, monkeypatch):
+    audio, post, response = http_provider
+    monkeypatch.setenv("WHATSAPP_TRANSCRIPTION_PROVIDER", "elevenlabs")
+    monkeypatch.delenv("WHATSAPP_TRANSCRIPTION_URL")
+    monkeypatch.delenv("WHATSAPP_TRANSCRIPTION_MODEL")
+    monkeypatch.setenv("WHATSAPP_TRANSCRIPTION_LANGUAGE", "ar")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-only-key")
+
+    def upload(url, **kwargs):
+        assert url == "https://api.elevenlabs.io/v1/speech-to-text"
+        assert kwargs["files"]["file"][1].read() == b"test opus"
+        assert kwargs["data"] == {"model_id": "scribe_v2", "tag_audio_events": "false", "language_code": "ar"}
+        assert kwargs["headers"] == {"xi-api-key": "test-only-key"}
+        assert kwargs["allow_redirects"] is False
+        return response
+
+    post.side_effect = upload
+    provider = transcription.provider_name()
+    model = transcription.configured_model(provider)
+    assert transcription.transcribe_file(audio, audio.parent, model=model, provider=provider) == "recognised words"
+    assert transcription.label(model, provider) == "[transcript (elevenlabs scribe_v2)] "
+
+
+def test_elevenlabs_requires_api_key(http_provider, monkeypatch):
+    audio, post, _response = http_provider
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    with pytest.raises(transcription.TranscriptionError, match="ELEVENLABS_API_KEY"):
+        transcription.transcribe_file(audio, audio.parent, model="scribe_v2", provider="elevenlabs")
+    post.assert_not_called()
