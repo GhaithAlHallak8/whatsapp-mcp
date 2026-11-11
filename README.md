@@ -410,6 +410,19 @@ three times, then left for `transcribe_audio` to handle on demand.
 `list_messages` accepts `media_type` (for example `audio`) to fetch only voice
 notes and other audio.
 
+**Expired media.** WhatsApp's servers drop media after a while, so downloading
+an old attachment fails with HTTP 404 or 410. When that happens the bridge asks
+your phone to upload the file again and waits up to 20 seconds for the answer.
+If the phone responds, `download_media` succeeds as usual (and an audio file is
+handed to automatic transcription). If it has not answered yet, the tool says a
+fresh copy was requested and to try again shortly; repeat calls within a minute
+do not ask the phone again. Limits:
+
+- The phone must be online; otherwise the request just times out.
+- Media cleared from the phone, or from chats deleted on the phone, cannot be
+  recovered. The tool then says the phone no longer has the file.
+- Group messages need the original sender, which older rows may lack.
+
 **Parameters:**
 
 - `message_id` (required): ID of the message with the voice note

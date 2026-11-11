@@ -303,6 +303,11 @@ func main() {
 			// time — so stash the original now and reuse it in handleMessage.
 			rememberOriginalTimestamp(v.Info.ID, v.Info.Timestamp)
 
+		case *events.MediaRetry:
+			go handleMediaRetry(client, messageStore, v, func(format string, args ...interface{}) {
+				logger.Infof(format, args...)
+			})
+
 		case *events.HistorySync:
 			// Process history sync events
 			handleHistorySync(client, messageStore, v, logger)

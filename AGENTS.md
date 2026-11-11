@@ -26,6 +26,7 @@ whatsapp-mcp/
 │   ├── media.go            # Media download, Ogg/Opus analysis
 │   ├── content.go          # Text, contact, quote, mention extraction
 │   ├── ephemeral.go        # Disappearing messages, revokes
+│   ├── media_retry.go      # Recover expired media by asking the phone to re-upload
 │   ├── transcribe_auto.go  # Auto-transcription queue and backfill
 │   ├── internal/transcribe # Transcription engines (whisper.cpp, OpenAI-compatible, ElevenLabs)
 │   ├── webhook.go          # Outgoing webhook for incoming messages

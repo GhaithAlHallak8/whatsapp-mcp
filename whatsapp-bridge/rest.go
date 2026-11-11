@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -325,12 +326,20 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 		fmt.Printf("📥 Download request: message_id=%s chat_jid=%s\n", req.MessageID, req.ChatJID)
 
 		// Download the media
-		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID)
+		success, mediaType, filename, path, err := downloadMediaWithRecovery(client, messageStore, req.MessageID, req.ChatJID)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
 
 		// Handle download result
+		if errors.Is(err, errMediaRetryRequested) || errors.Is(err, errMediaGone) {
+			status := "retry_requested"
+			if errors.Is(err, errMediaGone) {
+				status = "gone"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error(), "status": status})
+			return
+		}
 		if !success || err != nil {
 			errMsg := "Unknown error"
 			if err != nil {
@@ -394,7 +403,7 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 			return
 		}
 		go autoTranscribe.backfill(refs, func(messageID, chatJID string) (string, error) {
-			success, _, _, path, err := downloadMediaForMessage(client, messageStore, messageID, chatJID)
+			success, _, _, path, err := downloadMediaWithRecovery(client, messageStore, messageID, chatJID)
 			if err != nil {
 				return "", err
 			}

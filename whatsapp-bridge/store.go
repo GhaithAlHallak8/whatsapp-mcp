@@ -178,6 +178,9 @@ func ensureMessageStoreSchema(db *sql.DB) error {
 	if err := ensureColumn(db, "messages", "quoted_message_id", "TEXT"); err != nil {
 		return fmt.Errorf("failed to ensure messages.quoted_message_id column: %w", err)
 	}
+	if err := ensureMediaRetriesTable(db); err != nil {
+		return fmt.Errorf("failed to ensure media_retries table: %w", err)
+	}
 	return nil
 }
 

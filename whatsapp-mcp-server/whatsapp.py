@@ -1391,6 +1391,30 @@ def mark_messages_read(
         return False, f"Unexpected error: {str(e)}"
 
 
+def download_media_detail(message_id: str, chat_jid: str) -> tuple[str | None, str]:
+    """Download media from a message and return (local file path, bridge message).
+
+    The path is None when the download did not succeed; the message then says
+    why, including when a fresh copy was requested from the phone.
+    """
+    try:
+        url = f"{WHATSAPP_API_BASE_URL}/download"
+        payload = {"message_id": message_id, "chat_jid": chat_jid}
+        response = requests.post(url, json=payload, headers=_bridge_headers())
+        try:
+            result = response.json()
+        except ValueError:
+            result = None
+        if not isinstance(result, dict):
+            return None, f"Bridge returned HTTP {response.status_code}"
+        message = str(result.get("message") or "Unknown error")
+        if response.status_code == 200 and result.get("success", False) and result.get("path"):
+            return result["path"], message
+        return None, message
+    except requests.RequestException as e:
+        return None, f"Could not reach the WhatsApp bridge ({type(e).__name__})"
+
+
 def download_media(message_id: str, chat_jid: str) -> str | None:
     """Download media from a message and return the local file path.
 
@@ -1401,31 +1425,7 @@ def download_media(message_id: str, chat_jid: str) -> str | None:
     Returns:
         The local file path if download was successful, None otherwise
     """
-    try:
-        url = f"{WHATSAPP_API_BASE_URL}/download"
-        payload = {"message_id": message_id, "chat_jid": chat_jid}
-
-        response = requests.post(url, json=payload, headers=_bridge_headers())
-
-        if response.status_code == 200:
-            result = response.json()
-            if result.get("success", False):
-                path = result.get("path")
-                print(f"Media downloaded successfully: {path}")
-                return path
-            else:
-                print(f"Download failed: {result.get('message', 'Unknown error')}")
-                return None
-        else:
-            print(f"Error: HTTP {response.status_code} - {response.text}")
-            return None
-
-    except requests.RequestException as e:
-        print(f"Request error: {str(e)}")
-        return None
-    except json.JSONDecodeError:
-        print(f"Error parsing response: {response.text}")
-        return None
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        return None
+    path, message = download_media_detail(message_id, chat_jid)
+    if path is None:
+        print(f"Download failed: {message}")
+    return path

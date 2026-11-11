@@ -226,7 +226,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	// Download the media using whatsmeow client
 	mediaData, err := downloadMediaData(client, downloader)
 	if err != nil {
-		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
+		return false, "", "", "", fmt.Errorf("failed to download media: %w", err)
 	}
 
 	// Save the downloaded media to file. Owner-only (0600), same reasoning

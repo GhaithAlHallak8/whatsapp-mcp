@@ -19,6 +19,9 @@ from whatsapp import (
     download_media as whatsapp_download_media,
 )
 from whatsapp import (
+    download_media_detail as whatsapp_download_media_detail,
+)
+from whatsapp import (
     get_chat as whatsapp_get_chat,
 )
 from whatsapp import (
@@ -480,14 +483,16 @@ def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
         chat_jid: The JID of the chat containing the message
 
     Returns:
-        A dictionary containing success status, a status message, and the file path if successful
+        A dictionary containing success status, a status message, and the file path if successful.
+        Old media that WhatsApp's servers no longer hold is requested again from the user's phone;
+        if the phone has not answered yet the message says to try again shortly.
     """
-    file_path = whatsapp_download_media(message_id, chat_jid)
+    file_path, detail = whatsapp_download_media_detail(message_id, chat_jid)
 
     if file_path:
         return {"success": True, "message": "Media downloaded successfully", "file_path": file_path}
     else:
-        return {"success": False, "message": "Failed to download media"}
+        return {"success": False, "message": detail or "Failed to download media"}
 
 
 @mcp.tool()
