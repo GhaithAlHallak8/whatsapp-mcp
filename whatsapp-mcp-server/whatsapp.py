@@ -320,6 +320,9 @@ def _resolve_name_from_whatsmeow(jid: str) -> str | None:
             # Definitely a LID but not in the map — can't resolve
             return None
 
+    if "@" not in lookup_jid:
+        lookup_jid = f"{lookup_jid}@s.whatsapp.net"
+
     try:
         conn = sqlite3.connect(WHATSMEOW_DB_PATH)
         cursor = conn.cursor()
@@ -329,10 +332,20 @@ def _resolve_name_from_whatsmeow(jid: str) -> str | None:
             (lookup_jid,),
         )
         row = cursor.fetchone()
-        if row:
-            # Prefer full_name, then push_name, then first_name, then business_name
-            return row[0] or row[1] or row[2] or row[3] or None
-        return None
+        name = (row[0] or row[1] or row[2] or row[3]) if row else None
+        if name or not lookup_jid.endswith("@s.whatsapp.net"):
+            return name or None
+        # Unsaved senders' display names are keyed by LID, not phone.
+        cursor.execute("SELECT lid FROM whatsmeow_lid_map WHERE pn = ? LIMIT 1", (lookup_jid.split("@")[0],))
+        mapped = cursor.fetchone()
+        if not mapped:
+            return None
+        cursor.execute(
+            "SELECT full_name, push_name, first_name, business_name FROM whatsmeow_contacts WHERE their_jid = ? LIMIT 1",
+            (f"{mapped[0]}@lid",),
+        )
+        row = cursor.fetchone()
+        return (row[0] or row[1] or row[2] or row[3] or None) if row else None
     except sqlite3.Error:
         return None
     finally:
@@ -1451,12 +1464,17 @@ def chat_history_bounds(chat_jid: str) -> tuple[int, datetime | None]:
     return count, datetime.fromisoformat(oldest) if oldest else None
 
 
-def request_chat_history(chat_jid: str, count: int = HISTORY_REQUEST_COUNT) -> tuple[bool, str]:
+def request_chat_history(
+    chat_jid: str, count: int = HISTORY_REQUEST_COUNT, before_message_id: str | None = None
+) -> tuple[bool, str]:
     """Ask the bridge to request older messages for a chat from the phone."""
+    payload: dict[str, Any] = {"chat_jid": chat_jid, "count": count}
+    if before_message_id:
+        payload["before_message_id"] = before_message_id
     try:
         response = requests.post(
             f"{WHATSAPP_API_BASE_URL}/history",
-            json={"chat_jid": chat_jid, "count": count},
+            json=payload,
             headers=_bridge_headers(),
         )
         try:
@@ -1590,4 +1608,247 @@ def download_chat_media(
         "total_matching": total,
         "downloaded": downloaded,
         "failed": failed,
+    }
+
+
+def _bridge_post(path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any] | None, str]:
+    try:
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/{path}", json=payload, headers=_bridge_headers())
+    except requests.RequestException as e:
+        return 0, None, f"Could not reach the WhatsApp bridge ({type(e).__name__})"
+    try:
+        result = response.json()
+    except ValueError:
+        result = None
+    if not isinstance(result, dict):
+        return response.status_code, None, f"Bridge returned HTTP {response.status_code}"
+    return response.status_code, result, str(result.get("message") or "")
+
+
+def _named_sender(sender: str | None, cache: dict[str, str]) -> str:
+    key = sender or ""
+    if key not in cache:
+        cache[key] = get_sender_name(key) if key else ""
+    return cache[key]
+
+
+def list_unread(chat_limit: int = 20, messages_per_chat: int = 20) -> list[dict[str, Any]]:
+    """Chats with inbound messages newer than their read marker, with those messages.
+
+    Only chats that have a read marker are considered: without one there is no
+    way to tell what has been read.
+    """
+    chat_limit = max(1, min(chat_limit, 100))
+    messages_per_chat = max(1, min(messages_per_chat, 100))
+    conn = _connect_messages_db()
+    try:
+        cursor = conn.cursor()
+        if "last_read_time" not in {row[1] for row in cursor.execute("PRAGMA table_info(chats)")}:
+            return []
+        chats = cursor.execute(
+            """
+            SELECT c.jid, c.name, c.last_read_time,
+                   (SELECT COUNT(*) FROM messages m
+                     WHERE m.chat_jid = c.jid AND m.is_from_me = 0 AND m.timestamp > c.last_read_time) AS unread
+              FROM chats c
+             WHERE c.last_read_time IS NOT NULL AND c.last_message_time > c.last_read_time
+             ORDER BY c.last_message_time DESC
+            """
+        ).fetchall()
+        names: dict[str, str] = {}
+        result = []
+        for jid, name, last_read, unread in chats:
+            if not unread:
+                continue
+            rows = cursor.execute(
+                """
+                SELECT id, timestamp, sender, content, media_type, quoted_message_id FROM (
+                    SELECT id, timestamp, sender, content, media_type, quoted_message_id FROM messages
+                     WHERE chat_jid = ? AND is_from_me = 0 AND timestamp > ?
+                     ORDER BY timestamp DESC LIMIT ?
+                ) ORDER BY timestamp ASC
+                """,
+                (jid, last_read, messages_per_chat),
+            ).fetchall()
+            result.append(
+                {
+                    "chat_jid": jid,
+                    "chat_name": _display_chat_name(jid, name),
+                    "last_read_time": str(last_read),
+                    "unread_count": unread,
+                    "messages": [
+                        {
+                            "id": row[0],
+                            "timestamp": str(row[1]),
+                            "sender": row[2],
+                            "sender_name": _named_sender(row[2], names),
+                            "content": row[3],
+                            "media_type": row[4],
+                            "quoted_message_id": row[5],
+                        }
+                        for row in rows
+                    ],
+                }
+            )
+            if len(result) >= chat_limit:
+                break
+        return result
+    finally:
+        conn.close()
+
+
+def get_group_members(chat_jid: str) -> dict[str, Any]:
+    """Fetch a group's member list from WhatsApp and attach the names we know."""
+    status, result, message = _bridge_post("group-members", {"chat_jid": chat_jid})
+    if status != 200 or not result or not result.get("success"):
+        return {"success": False, "message": message or "The bridge could not fetch the group", "members": []}
+    members = []
+    for member in result.get("members") or []:
+        phone, lid = member.get("phone") or "", member.get("lid") or ""
+        name = ""
+        if phone:
+            name = get_sender_name(f"{phone}@s.whatsapp.net")
+        if (not name or name == f"{phone}@s.whatsapp.net" or name == phone) and lid:
+            name = _resolve_name_from_whatsmeow(f"{lid}@lid") or ""
+        if name in (phone, f"{phone}@s.whatsapp.net"):
+            name = ""
+        members.append(
+            {
+                "name": name or member.get("display_name") or None,
+                "phone": phone or None,
+                "jid": member.get("jid"),
+                "is_admin": bool(member.get("is_admin")),
+                "is_super_admin": bool(member.get("is_super_admin")),
+            }
+        )
+    members.sort(key=lambda m: (not m["is_admin"], (m["name"] or "~").lower()))
+    return {
+        "success": True,
+        "name": result.get("name"),
+        "topic": result.get("topic") or None,
+        "member_count": len(members),
+        "members": members,
+    }
+
+
+def _rfc3339(label: str, value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(f"Invalid date format for '{label}': {value}. Please use ISO-8601 format.") from None
+    return _as_aware(parsed).isoformat(timespec="seconds")
+
+
+def transcribe_chat_audio(after: str, before: str | None = None, chat_jid: str | None = None) -> dict[str, Any]:
+    """Queue every untranscribed audio message in a date range for transcription."""
+    payload: dict[str, Any] = {"after": _rfc3339("after", after)}
+    if before:
+        payload["before"] = _rfc3339("before", before)
+    if chat_jid:
+        payload["chat_jid"] = chat_jid
+    _status, result, message = _bridge_post("transcribe/backfill", payload)
+    if not result or not result.get("success"):
+        return {"success": False, "message": message or "The bridge could not start transcription", "queued": 0}
+    queued = int(result.get("candidates") or 0)
+    return {
+        "success": True,
+        "queued": queued,
+        "message": (
+            f"Queued {queued} audio messages. They are transcribed one at a time in the background; "
+            "read the transcripts with list_messages (media_type='audio') in a minute or two."
+            if queued
+            else "No untranscribed audio in that range."
+        ),
+    }
+
+
+REFRESH_STEP = 45
+REFRESH_WAIT_SECONDS = 6.0
+
+
+def _reply_link_count(conn: sqlite3.Connection, chat_jid: str, since: datetime) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM messages WHERE chat_jid = ? AND timestamp >= ? AND quoted_message_id IS NOT NULL "
+        "AND quoted_message_id != ''",
+        (chat_jid, since),
+    ).fetchone()[0]
+
+
+def refresh_chat_history(chat_jid: str, since: str, before: str | None = None, max_rounds: int = 10) -> dict[str, Any]:
+    """Re-request already stored history from the phone so missing reply links are filled in.
+
+    Walks backwards from `before` (default: the newest stored message) to
+    `since`, asking the phone for the messages before each anchor. Rows are
+    merged, never duplicated.
+    """
+    try:
+        target = _as_aware(datetime.fromisoformat(since))
+    except ValueError:
+        raise ValueError(f"Invalid date format for 'since': {since}. Please use ISO-8601 format.") from None
+    start = None
+    if before:
+        try:
+            start = _as_aware(datetime.fromisoformat(before))
+        except ValueError:
+            raise ValueError(f"Invalid date format for 'before': {before}. Please use ISO-8601 format.") from None
+    max_rounds = max(1, min(max_rounds, HISTORY_MAX_ROUNDS))
+
+    def query(sql: str, params: tuple) -> Any:
+        conn = _connect_messages_db()
+        try:
+            return conn.execute(sql, params).fetchone()
+        finally:
+            conn.close()
+
+    def links() -> int:
+        conn = _connect_messages_db()
+        try:
+            return _reply_link_count(conn, chat_jid, target)
+        finally:
+            conn.close()
+
+    if start:
+        anchor = query(
+            "SELECT id, timestamp FROM messages WHERE chat_jid = ? AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
+            (chat_jid, start),
+        )
+    else:
+        anchor = query(
+            "SELECT id, timestamp FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1", (chat_jid,)
+        )
+    if not anchor:
+        return {"success": False, "message": "No stored messages for this chat", "rounds": 0, "reply_links_added": 0}
+    before = links()
+    rounds = 0
+    reached = False
+    while rounds < max_rounds:
+        ok, message = request_chat_history(chat_jid, before_message_id=anchor[0])
+        if not ok:
+            return {
+                "success": False,
+                "message": message or "The bridge refused the history request",
+                "rounds": rounds,
+                "reply_links_added": links() - before,
+            }
+        rounds += 1
+        time.sleep(REFRESH_WAIT_SECONDS)
+        anchor = query(
+            "SELECT id, timestamp FROM messages WHERE chat_jid = ? AND timestamp < ? "
+            "ORDER BY timestamp DESC LIMIT 1 OFFSET ?",
+            (chat_jid, anchor[1], REFRESH_STEP - 1),
+        )
+        if not anchor or _as_aware(datetime.fromisoformat(str(anchor[1]))) < target:
+            reached = True
+            break
+    added = links() - before
+    return {
+        "success": True,
+        "rounds": rounds,
+        "reply_links_added": added,
+        "refreshed_back_to": str(anchor[1]) if anchor else since,
+        "message": (
+            f"Refreshed history back to the requested date; {added} reply links added"
+            if reached
+            else f"Reached max_rounds; {added} reply links added so far. Call again to continue further back"
+        ),
     }

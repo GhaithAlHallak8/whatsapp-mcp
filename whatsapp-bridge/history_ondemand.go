@@ -32,8 +32,9 @@ import (
 
 // HistoryRequest is the JSON body accepted by POST /api/history.
 type HistoryRequest struct {
-	ChatJID string `json:"chat_jid"`
-	Count   int    `json:"count,omitempty"`
+	ChatJID         string `json:"chat_jid"`
+	Count           int    `json:"count,omitempty"`
+	BeforeMessageID string `json:"before_message_id,omitempty"`
 }
 
 const (
@@ -127,6 +128,25 @@ func oldestStoredMessage(store *MessageStore, chatJID string) (id string, fromMe
 	return id, fromMe, anchorTime(rawTS), nil
 }
 
+func storedMessageAnchor(store *MessageStore, chatJID, messageID string) (id string, fromMe bool, ts time.Time, err error) {
+	var rawTS any
+	err = store.db.QueryRow(
+		"SELECT id, is_from_me, timestamp FROM messages WHERE chat_jid = ? AND id = ?",
+		chatJID, messageID,
+	).Scan(&id, &fromMe, &rawTS)
+	if err != nil {
+		return "", false, time.Time{}, err
+	}
+	return id, fromMe, anchorTime(rawTS), nil
+}
+
+func historyAnchor(store *MessageStore, req HistoryRequest) (id string, fromMe bool, ts time.Time, err error) {
+	if req.BeforeMessageID != "" {
+		return storedMessageAnchor(store, req.ChatJID, req.BeforeMessageID)
+	}
+	return oldestStoredMessage(store, req.ChatJID)
+}
+
 // registerHistoryEndpoint wires POST /api/history onto an existing mux.
 func registerHistoryEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, messageStore *MessageStore) {
 	mux.HandleFunc("/api/history", auth(func(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +190,7 @@ func registerHistoryEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) htt
 			return
 		}
 
-		id, fromMe, ts, err := oldestStoredMessage(messageStore, req.ChatJID)
+		id, fromMe, ts, err := historyAnchor(messageStore, req)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(http.StatusNotFound,
 				"No stored message for this chat to anchor the request; send or receive one message first")

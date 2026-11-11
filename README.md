@@ -953,6 +953,23 @@ The same request is available to AI clients as the `backfill_chat` tool, which
 repeats it until a given date is covered (`until`), the phone returns nothing
 more, or `max_rounds` is reached.
 
+Pass `"before_message_id": "<id>"` to anchor the request on a specific stored
+message instead of the oldest one. The phone then re-sends messages the bridge
+already holds, which fills in fields older bridge versions did not store (reply
+links). The `refresh_chat_history` tool walks a date window this way.
+
+### More tools for AI clients
+
+| Tool | What it does |
+| --- | --- |
+| `list_unread` | Every chat with inbound messages newer than its read marker, with those messages, in one call |
+| `get_group_members` | A group's members with names, phone numbers and admin status (`POST /api/group-members`) |
+| `transcribe_chat_audio` | Queues all untranscribed audio in a date range through the bridge's transcription backfill |
+| `refresh_chat_history` | Re-fetches a window of stored history from the phone to fill in missing reply links |
+
+Sender names for people who are not saved contacts now fall back to the display
+name they set on WhatsApp, which whatsmeow stores under their LID.
+
 ## Call History
 
 The bridge captures incoming WhatsApp voice and video calls live into a

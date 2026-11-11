@@ -39,6 +39,9 @@ from whatsapp import (
     get_direct_chat_by_contact as whatsapp_get_direct_chat_by_contact,
 )
 from whatsapp import (
+    get_group_members as whatsapp_get_group_members,
+)
+from whatsapp import (
     get_last_interaction as whatsapp_get_last_interaction,
 )
 from whatsapp import (
@@ -54,7 +57,13 @@ from whatsapp import (
     list_messages as whatsapp_list_messages,
 )
 from whatsapp import (
+    list_unread as whatsapp_list_unread,
+)
+from whatsapp import (
     mark_messages_read as whatsapp_mark_messages_read,
+)
+from whatsapp import (
+    refresh_chat_history as whatsapp_refresh_chat_history,
 )
 from whatsapp import (
     search_contacts as whatsapp_search_contacts,
@@ -71,6 +80,9 @@ from whatsapp import (
 from whatsapp import (
     send_reaction as whatsapp_send_reaction,
 )
+from whatsapp import (
+    transcribe_chat_audio as whatsapp_transcribe_chat_audio,
+)
 
 # Initialize FastMCP server. Env-var handling is deferred to the __main__ block
 # so importing this module never parses env vars or exits the process.
@@ -79,6 +91,7 @@ mcp = FastMCP("whatsapp")
 READ_TOOL = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
 LOCAL_WRITE_TOOL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 SEND_TOOL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True)
+REMOTE_READ_TOOL = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 MARK_READ_TOOL = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
 
 PreviewDimension = Annotated[
@@ -499,6 +512,89 @@ def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     """
     success, status_message = whatsapp_audio_voice_message(recipient, media_path)
     return {"success": success, "message": status_message}
+
+
+@mcp.tool(annotations=READ_TOOL)
+@oauth.guarded("read")
+def list_unread(chat_limit: int = 20, messages_per_chat: int = 20) -> list[dict[str, Any]]:
+    """Catch up: every chat with unread inbound messages, and those messages, in one call.
+
+    Use this for "what did I miss" or "any new messages" instead of walking list_chats and
+    list_messages. A chat counts as unread when it has inbound messages newer than its read
+    marker; chats the bridge has no read marker for are left out. Each message carries
+    sender_name, so people who are not saved contacts still show their WhatsApp display name.
+
+    Args:
+        chat_limit: Maximum chats to return, most recently active first (default 20, max 100)
+        messages_per_chat: Newest unread messages to include per chat, oldest first (default 20,
+            max 100); unread_count gives the full number
+    """
+    return whatsapp_list_unread(chat_limit=chat_limit, messages_per_chat=messages_per_chat)
+
+
+@mcp.tool(annotations=REMOTE_READ_TOOL)
+@oauth.guarded("read")
+def get_group_members(chat_jid: str) -> dict[str, Any]:
+    """List the members of a WhatsApp group with names, phone numbers and admin status.
+
+    Use this to learn who is in a group or to put a name to a phone number seen there. Names come
+    from saved contacts first, then from the display name the person set on WhatsApp. The member
+    list is fetched live from WhatsApp, so the bridge must be connected.
+
+    Args:
+        chat_jid: The group JID (ends in @g.us)
+
+    Returns:
+        A dictionary with the group name, topic, member_count and members (admins first), each with
+        name, phone, jid, is_admin and is_super_admin. name is null when nothing is known.
+    """
+    return whatsapp_get_group_members(chat_jid)
+
+
+@mcp.tool(annotations=LOCAL_WRITE_TOOL)
+@oauth.guarded("read")
+def transcribe_chat_audio(after: str, before: str | None = None, chat_jid: str | None = None) -> dict[str, Any]:
+    """Transcribe every untranscribed voice note and audio message in a date range, in one call.
+
+    Use this instead of calling transcribe_audio per message when a chat has a run of voice notes.
+    Requires the bridge to have automatic transcription configured. The audio is sent to the
+    configured transcription provider, which may be an outside paid service: confirm with the
+    user before transcribing a large range. Transcription runs in the background; read the
+    results afterwards with list_messages(media_type="audio").
+
+    Args:
+        after: ISO-8601 date or datetime; audio sent after this is included (required)
+        before: ISO-8601 date or datetime; defaults to now
+        chat_jid: Limit to one chat; omit for all chats
+
+    Returns:
+        A dictionary with success, the number of audio messages queued, and a message.
+    """
+    return whatsapp_transcribe_chat_audio(after, before=before, chat_jid=chat_jid)
+
+
+@mcp.tool(annotations=LOCAL_WRITE_TOOL)
+@oauth.guarded("read")
+def refresh_chat_history(chat_jid: str, since: str, before: str | None = None, max_rounds: int = 10) -> dict[str, Any]:
+    """Re-fetch a chat's recent history from the phone to fill in missing reply links.
+
+    Use this when messages in a chat show no quoted_message_id although they were clearly replies:
+    history synced by older bridge versions was stored without reply links. It walks backwards from
+    `before` (default: the newest message) to `since`, about 45 messages per round and roughly 6
+    seconds each. In a busy group that is slow, so set `since` and `before` tightly around the
+    messages in question. The phone must be online. Nothing is sent to the chat.
+
+    Args:
+        chat_jid: The chat to refresh
+        since: ISO-8601 date or datetime to refresh back to
+        before: ISO-8601 date or datetime to start from; omit to start at the newest message
+        max_rounds: Maximum requests to the phone in this call (default 10, max 20)
+
+    Returns:
+        A dictionary with success, rounds used, reply_links_added, refreshed_back_to and a message.
+        Call again to continue further back.
+    """
+    return whatsapp_refresh_chat_history(chat_jid, since, before=before, max_rounds=max_rounds)
 
 
 @mcp.tool(annotations=LOCAL_WRITE_TOOL)
