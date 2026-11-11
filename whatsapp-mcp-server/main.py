@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP, Image
 from pydantic import Field
 
 import media_preview
+import oauth
 import transcription
 from mcp_config import resolve_host, resolve_port, resolve_transport
 from parent_watchdog import install_stdio_parent_watchdog
@@ -80,6 +81,7 @@ PreviewDimension = Annotated[
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def search_contacts(query: str) -> list[dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number.
 
@@ -91,6 +93,7 @@ def search_contacts(query: str) -> list[dict[str, Any]]:
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def get_contact(
     identifier: str | None = None,
     phone_number: str | None = None,
@@ -182,6 +185,7 @@ def get_contact(
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def list_messages(
     after: str | None = None,
     before: str | None = None,
@@ -238,6 +242,7 @@ def list_messages(
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def list_chats(
     query: str | None = None,
     limit: int = 50,
@@ -272,6 +277,7 @@ def list_chats(
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def get_chat(chat_jid: str, include_last_message: bool = True) -> dict[str, Any]:
     """Get WhatsApp chat metadata by JID.
 
@@ -287,6 +293,7 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> dict[str, Any]
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def get_direct_chat_by_contact(sender_phone_number: str) -> dict[str, Any]:
     """Get WhatsApp chat metadata by sender phone number.
 
@@ -298,6 +305,7 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> list[dict[str, Any]]:
     """Get all WhatsApp chats involving the contact.
 
@@ -313,6 +321,7 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> list[dict[str
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def get_last_interaction(jid: str) -> dict[str, Any]:
     """Get most recent WhatsApp message involving the contact.
 
@@ -327,6 +336,7 @@ def get_last_interaction(jid: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def get_message_context(message_id: str, before: int = 5, after: int = 5) -> dict[str, Any]:
     """Get context around a specific WhatsApp message.
 
@@ -344,6 +354,7 @@ def get_message_context(message_id: str, before: int = 5, after: int = 5) -> dic
 
 
 @mcp.tool()
+@oauth.guarded("send")
 def send_message(
     recipient: str,
     message: str,
@@ -384,6 +395,7 @@ def send_message(
 
 
 @mcp.tool()
+@oauth.guarded("send")
 def send_reaction(
     recipient: str,
     message_id: str,
@@ -410,6 +422,7 @@ def send_reaction(
 
 
 @mcp.tool()
+@oauth.guarded("send")
 def mark_messages_read(
     message_ids: list[str],
     chat_jid: str,
@@ -435,6 +448,7 @@ def mark_messages_read(
 
 
 @mcp.tool()
+@oauth.guarded("send")
 def send_file(recipient: str, media_path: str, caption: str = "") -> dict[str, Any]:
     """Send a file (image, video, document) via WhatsApp, optionally with a caption.
 
@@ -459,6 +473,7 @@ def send_file(recipient: str, media_path: str, caption: str = "") -> dict[str, A
 
 
 @mcp.tool()
+@oauth.guarded("send")
 def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
     """Send any audio file as a WhatsApp audio message to the specified recipient. For group messages use the JID. If it errors due to ffmpeg not being installed, use send_file instead.
 
@@ -475,6 +490,7 @@ def send_audio_message(recipient: str, media_path: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
     """Download media from a WhatsApp message and get the local file path.
 
@@ -496,6 +512,7 @@ def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def view_media(
     message_id: str,
     chat_jid: str,
@@ -537,6 +554,7 @@ def view_media(
 
 
 @mcp.tool()
+@oauth.guarded("read")
 def transcribe_audio(message_id: str, chat_jid: str, force: bool = False) -> dict[str, Any]:
     """Transcribe a WhatsApp voice note and return its text.
 
@@ -625,6 +643,16 @@ if __name__ == "__main__":
         if transport != "stdio":
             mcp.settings.host = resolve_host(os.getenv("WHATSAPP_MCP_HOST"))
             mcp.settings.port = resolve_port(os.getenv("WHATSAPP_MCP_PORT"))
+            oauth_config = oauth.load_config(
+                os.getenv, os.path.dirname(os.path.abspath(MESSAGES_DB_PATH)), mcp.settings.host, mcp.settings.port
+            )
+            if oauth_config is not None:
+                oauth.enable(mcp, oauth_config)
+                print(f"OAuth enabled; public URL {oauth_config.public_url}", file=sys.stderr)
+            elif mcp.settings.host not in ("127.0.0.1", "localhost", "::1"):
+                raise ValueError(
+                    "Refusing to serve on a non-loopback address without authentication; set WHATSAPP_MCP_SECRET"
+                )
             # stdout is reserved for the protocol on stdio; log startup to stderr.
             print(
                 f"WhatsApp MCP server listening on {mcp.settings.host}:{mcp.settings.port} via {transport}",

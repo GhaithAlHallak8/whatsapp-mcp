@@ -34,6 +34,7 @@ whatsapp-mcp/
 ├── whatsapp-mcp-server/    # Python MCP server — exposes tools to AI clients
 │   ├── main.py             # FastMCP tool definitions
 │   ├── whatsapp.py         # DB queries + bridge HTTP client
+│   ├── oauth.py            # Single-user OAuth for the http/sse transports
 │   └── audio.py            # FFmpeg helpers
 └── .github/                # CI, release, security workflows
 ```
@@ -100,6 +101,9 @@ For PR creation, hosted review, CI, and merge readiness, use the installed `baby
 | `WHATSAPP_MCP_TRANSPORT` | `stdio` | MCP transport to serve clients: `stdio`, `http`, or `sse` |
 | `WHATSAPP_MCP_HOST` | `127.0.0.1` | Bind address for the `http`/`sse` transports |
 | `WHATSAPP_MCP_PORT` | `8000` | Port for the `http`/`sse` transports |
+| `WHATSAPP_MCP_SECRET` | unset | Turns on OAuth for the `http`/`sse` transports (min 32 chars). Entered on the consent page; also accepted as a static bearer token. Required to bind a non-loopback host |
+| `WHATSAPP_MCP_PUBLIC_URL` | `http://<host>:<port>` | Public HTTPS origin used as OAuth issuer and resource (e.g. the tunnel hostname) |
+| `WHATSAPP_MCP_AUTH_DB` | `mcp-auth.db` next to `WHATSAPP_DB_PATH` | SQLite file for OAuth clients, hashed tokens and the tool-call audit log |
 | `WEBHOOK_URL` | `http://localhost:8769/whatsapp/webhook` | Outgoing webhook for incoming messages (empty falls back to this default) |
 | `WEBHOOK_ENABLED` | `true` | Set to `false` to disable outbound webhooks entirely |
 | `WHATSAPP_AUTO_DOWNLOAD_MEDIA` | `true` | Automatically download incoming media, including webhook image bytes. `false` keeps webhook metadata/text without `mediaBase64` and leaves downloads to `/api/download` (`download_media`); delayed downloads may fail after media expires. Status messages are stored but never auto-downloaded or forwarded |

@@ -539,6 +539,9 @@ Copy `.env.example` to `.env` and configure as needed:
 | `WHATSAPP_MCP_TRANSPORT` | `stdio`                                | MCP transport to serve clients: `stdio`, `http`, or `sse` |
 | `WHATSAPP_MCP_HOST`    | `127.0.0.1`                              | Bind address for the `http`/`sse` transports |
 | `WHATSAPP_MCP_PORT`    | `8000`                                   | Port for the `http`/`sse` transports |
+| `WHATSAPP_MCP_SECRET`  | unset                                    | Turns on OAuth for the `http`/`sse` transports (min 32 chars); required to bind a non-loopback host |
+| `WHATSAPP_MCP_PUBLIC_URL` | `http://<host>:<port>`                | Public HTTPS origin used as the OAuth issuer |
+| `WHATSAPP_MCP_AUTH_DB` | `mcp-auth.db` next to `messages.db`      | OAuth clients, hashed tokens and tool-call audit log |
 | `WHATSAPP_PARENT_WATCHDOG_S` | `30`                              | Stdio parent-liveness poll interval (seconds); exits on parent reparent only |
 
 ### MCP transport (stdio vs http/sse)
@@ -559,10 +562,46 @@ WHATSAPP_MCP_TRANSPORT=sse uv run main.py
 recommended choice for remote connections; `sse` is kept for older clients.
 
 > **Security:** `WHATSAPP_MCP_HOST` defaults to `127.0.0.1`, so the HTTP/SSE
-> server is reachable only from the local machine. The server has no built-in
-> authentication, and the underlying bridge can read and send WhatsApp messages
-> on your account. Only bind to a non-loopback address (e.g. `0.0.0.0`) if you
-> place an authenticating reverse proxy or tunnel in front of it.
+> server is reachable only from the local machine. Without
+> `WHATSAPP_MCP_SECRET` the server has no authentication and refuses to bind a
+> non-loopback address. To reach it from other devices, turn on OAuth as
+> described below.
+
+### Remote access with OAuth
+
+Setting `WHATSAPP_MCP_SECRET` puts the `http`/`sse` transports behind OAuth 2.1
+(PKCE, dynamic client registration, protected-resource metadata), which is what
+the Claude apps expect from a custom connector. It is single-user: there are no
+accounts, and whoever knows the secret is the owner.
+
+```bash
+export WHATSAPP_MCP_SECRET="$(openssl rand -base64 36)"
+export WHATSAPP_MCP_PUBLIC_URL=https://wa.example.com
+WHATSAPP_MCP_TRANSPORT=http uv run main.py
+```
+
+1. Publish `127.0.0.1:8000` at the public URL with Cloudflare Tunnel or
+   Tailscale Funnel rather than opening a port. Only the MCP endpoint is
+   published; the Go bridge stays on loopback behind its own token.
+2. Add `https://wa.example.com/mcp` as a custom connector in Claude.
+3. Claude opens the consent page. Enter the secret, tick **Send** only if this
+   connector should be able to send, and press **Allow**.
+
+Two scopes exist. `read` covers listing, searching, downloading, viewing and
+transcribing. `send` covers sending messages and files, reactions and read
+receipts. A connector granted `read` only cannot be tricked into sending by
+text hidden in a received message.
+
+- Access tokens last one hour and refresh tokens 30 days (rotated on use). They
+  are stored hashed, with registered clients and a log of every tool call
+  (time, client, tool), in `mcp-auth.db` next to `messages.db`
+  (`WHATSAPP_MCP_AUTH_DB` overrides), owner-readable only.
+- `uv run oauth.py revoke-all` signs every client out.
+- Five wrong secrets lock the consent page for 15 minutes.
+- Scripts and Claude Code can skip the browser flow and send
+  `Authorization: Bearer <secret>`, which carries both scopes.
+- The bridge must run on a machine that stays on; nothing is captured or
+  transcribed while it is off.
 
 ### Bridge authentication and media paths
 
