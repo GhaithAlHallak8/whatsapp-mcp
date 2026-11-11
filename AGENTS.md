@@ -18,7 +18,14 @@ Two components, one repo:
 ```
 whatsapp-mcp/
 ├── whatsapp-bridge/        # Go bridge — talks to WhatsApp Web via whatsmeow
-│   ├── main.go             # REST API + event loop
+│   ├── main.go             # Startup, config, pairing
+│   ├── rest.go             # REST API
+│   ├── handlers.go         # Message, history sync and call event handling
+│   ├── store.go            # messages.db schema, migrations, queries
+│   ├── send.go             # Outbound messages
+│   ├── media.go            # Media download, Ogg/Opus analysis
+│   ├── content.go          # Text, contact, quote, mention extraction
+│   ├── ephemeral.go        # Disappearing messages, revokes
 │   ├── webhook.go          # Outgoing webhook for incoming messages
 │   └── store/              # SQLite (whatsapp.db, messages.db) + media — gitignored
 ├── whatsapp-mcp-server/    # Python MCP server — exposes tools to AI clients
@@ -121,7 +128,9 @@ When adding a new env var: document it here, in `README.md`, and in `.env.exampl
 |---|---|
 | Add or modify an MCP tool | `whatsapp-mcp-server/main.py` |
 | Change DB queries / data conversion | `whatsapp-mcp-server/whatsapp.py` |
-| Change bridge REST API or event handling | `whatsapp-bridge/main.go` |
+| Change bridge REST API | `whatsapp-bridge/rest.go` |
+| Change bridge event handling | `whatsapp-bridge/handlers.go` |
+| Change `messages.db` schema or queries | `whatsapp-bridge/store.go` |
 | Change webhook payload | `whatsapp-bridge/webhook.go` |
 | Change CI behavior | `.github/workflows/*.yml` |
 | Change release behavior | `release-please-config.json`, `.release-please-manifest.json` |
