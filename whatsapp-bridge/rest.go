@@ -326,16 +326,18 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 		fmt.Printf("📥 Download request: message_id=%s chat_jid=%s\n", req.MessageID, req.ChatJID)
 
 		// Download the media
-		success, mediaType, filename, path, err := downloadMediaWithRecovery(client, messageStore, req.MessageID, req.ChatJID)
+		success, mediaType, filename, path, err := downloadMediaForRequest(client, messageStore, req)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
 
 		// Handle download result
-		if errors.Is(err, errMediaRetryRequested) || errors.Is(err, errMediaGone) {
+		if errors.Is(err, errMediaRetryRequested) || errors.Is(err, errMediaGone) || errors.Is(err, errMediaExpired) {
 			status := "retry_requested"
 			if errors.Is(err, errMediaGone) {
 				status = "gone"
+			} else if errors.Is(err, errMediaExpired) {
+				status = "expired"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error(), "status": status})
 			return

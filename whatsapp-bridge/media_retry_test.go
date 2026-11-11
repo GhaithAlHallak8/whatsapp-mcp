@@ -176,3 +176,18 @@ func TestMediaRetryMessageInfoForGroups(t *testing.T) {
 		t.Fatal("group message without a sender was accepted")
 	}
 }
+
+func TestDownloadRequestCanSkipPhoneRecovery(t *testing.T) {
+	h := newRetryHarness(t, whatsmeow.ErrMediaDownloadFailedWith410)
+	storeAudio(t, h.ms, "m1", "", time.Now())
+	skip := false
+	_, _, _, _, err := downloadMediaForRequest(nil, h.ms, DownloadMediaRequest{MessageID: "m1", ChatJID: phonePN.String(), Recover: &skip})
+	if !errors.Is(err, errMediaExpired) || len(h.receipts) != 0 {
+		t.Fatalf("err = %v, phone asked %d times", err, len(h.receipts))
+	}
+	h.expired = false
+	success, _, _, path, err := downloadMediaForRequest(nil, h.ms, DownloadMediaRequest{MessageID: "m1", ChatJID: phonePN.String(), Recover: &skip})
+	if err != nil || !success || path != h.path {
+		t.Fatalf("download = %v %q %v", success, path, err)
+	}
+}

@@ -1392,7 +1392,7 @@ def mark_messages_read(
         return False, f"Unexpected error: {str(e)}"
 
 
-def download_media_detail(message_id: str, chat_jid: str) -> tuple[str | None, str]:
+def download_media_detail(message_id: str, chat_jid: str, recover: bool = True) -> tuple[str | None, str]:
     """Download media from a message and return (local file path, bridge message).
 
     The path is None when the download did not succeed; the message then says
@@ -1401,6 +1401,8 @@ def download_media_detail(message_id: str, chat_jid: str) -> tuple[str | None, s
     try:
         url = f"{WHATSAPP_API_BASE_URL}/download"
         payload = {"message_id": message_id, "chat_jid": chat_jid}
+        if not recover:
+            payload["recover"] = False
         response = requests.post(url, json=payload, headers=_bridge_headers())
         try:
             result = response.json()
@@ -1519,3 +1521,73 @@ def backfill_chat(chat_jid: str, until: str | None = None, max_rounds: int = 5) 
     if covered():
         return summary(True, "History now covers the requested date")
     return summary(True, "Reached max_rounds; call again to go further back")
+
+
+BULK_MEDIA_TYPES = frozenset({"image", "video", "audio", "document", "sticker", "any"})
+BULK_MEDIA_MAX = 200
+
+
+def download_chat_media(
+    chat_jid: str,
+    after: str | None = None,
+    before: str | None = None,
+    media_type: str = "image",
+    limit: int = 50,
+    recover_expired: bool = False,
+) -> dict[str, Any]:
+    """Download every media file of one type from a chat within a date range.
+
+    Files already on disk are returned without a network request. Media that
+    WhatsApp's servers no longer hold is reported as failed unless
+    recover_expired is set, because recovering it asks the phone once per file.
+    """
+    kind = (media_type or "").strip().lower()
+    if kind not in BULK_MEDIA_TYPES:
+        raise ValueError(f"media_type must be one of: {', '.join(sorted(BULK_MEDIA_TYPES))}")
+    limit = max(1, min(limit, BULK_MEDIA_MAX))
+    where = ["chat_jid = ?", "deleted_at IS NULL"]
+    params: list[Any] = [chat_jid]
+    if kind == "any":
+        where.append("media_type IS NOT NULL AND media_type != ''")
+    else:
+        where.append("media_type = ?")
+        params.append(kind)
+    for label, value, op in (("after", after, ">"), ("before", before, "<")):
+        if value:
+            try:
+                parsed = datetime.fromisoformat(value)
+            except ValueError:
+                raise ValueError(f"Invalid date format for '{label}': {value}. Please use ISO-8601 format.") from None
+            where.append(f"timestamp {op} ?")
+            params.append(parsed)
+    clause = " AND ".join(where)
+    conn = _connect_messages_db()
+    try:
+        total = conn.execute(f"SELECT COUNT(*) FROM messages WHERE {clause}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT id, timestamp, sender, media_type FROM messages WHERE {clause} ORDER BY timestamp DESC LIMIT ?",
+            [*params, limit],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    downloaded, failed = [], []
+    for message_id, timestamp, sender, row_type in rows:
+        path, message = download_media_detail(message_id, chat_jid, recover=recover_expired)
+        entry = {"message_id": message_id, "timestamp": str(timestamp), "sender": sender, "media_type": row_type}
+        if path:
+            downloaded.append({**entry, "file_path": path})
+        else:
+            failed.append({**entry, "reason": message})
+    note = f"Downloaded {len(downloaded)} of {len(rows)} files"
+    if total > len(rows):
+        note += (
+            f"; {total - len(rows)} older matches not attempted (narrow the dates or raise limit, max {BULK_MEDIA_MAX})"
+        )
+    return {
+        "success": True,
+        "message": note,
+        "total_matching": total,
+        "downloaded": downloaded,
+        "failed": failed,
+    }

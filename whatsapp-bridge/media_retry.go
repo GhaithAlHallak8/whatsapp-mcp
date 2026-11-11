@@ -24,6 +24,7 @@ const (
 	mediaRetryHost = "https://mmg.whatsapp.net"
 
 	mediaRetryRequestedMessage = "This media has expired on WhatsApp's servers. A fresh copy was requested from your phone; keep the phone online and try again shortly."
+	mediaExpiredMessage        = "This media has expired on WhatsApp's servers. Download it on its own to ask your phone for a fresh copy."
 	mediaRetryGoneMessage      = "This media has expired on WhatsApp's servers and the phone no longer has the file, so it cannot be recovered."
 )
 
@@ -33,6 +34,7 @@ var (
 
 	errMediaRetryRequested = errors.New(mediaRetryRequestedMessage)
 	errMediaGone           = errors.New(mediaRetryGoneMessage)
+	errMediaExpired        = errors.New(mediaExpiredMessage)
 
 	mediaRetryWaitersMu sync.Mutex
 	mediaRetryWaiters   = map[string][]chan string{}
@@ -282,6 +284,17 @@ func handleMediaRetry(client *whatsmeow.Client, store *MessageStore, evt *events
 		autoTranscribe.offer(evt.MessageID, chatJID, path, true)
 	}
 	finish(mediaRetryRecovered)
+}
+
+func downloadMediaForRequest(client *whatsmeow.Client, store *MessageStore, req DownloadMediaRequest) (bool, string, string, string, error) {
+	if req.Recover == nil || *req.Recover {
+		return downloadMediaWithRecovery(client, store, req.MessageID, req.ChatJID)
+	}
+	success, mediaType, filename, path, err := downloadMediaForMessage(client, store, req.MessageID, req.ChatJID)
+	if isMediaExpired(err) {
+		return false, "", "", "", errMediaExpired
+	}
+	return success, mediaType, filename, path, err
 }
 
 func downloadMediaWithRecovery(client *whatsmeow.Client, store *MessageStore, messageID, chatJID string) (bool, string, string, string, error) {

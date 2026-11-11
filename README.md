@@ -423,6 +423,15 @@ do not ask the phone again. Limits:
   recovered. The tool then says the phone no longer has the file.
 - Group messages need the original sender, which older rows may lack.
 
+`POST /api/download` accepts `"recover": false` to skip the phone request and
+report an expired file as `"status": "expired"` instead.
+
+**Bulk download.** `download_chat_media` downloads every file of one type
+(`image` by default) from a chat within a date range in a single call, newest
+first, up to 200 per call. Files already on disk are returned as they are.
+Expired files are listed as failed rather than requested from the phone, unless
+`recover_expired` is set.
+
 **Parameters:**
 
 - `message_id` (required): ID of the message with the voice note

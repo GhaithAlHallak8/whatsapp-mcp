@@ -73,6 +73,7 @@ func mediaDownloadStorePaths(chatJID, mediaType, messageID string, timestamp tim
 type DownloadMediaRequest struct {
 	MessageID string `json:"message_id"`
 	ChatJID   string `json:"chat_jid"`
+	Recover   *bool  `json:"recover,omitempty"`
 }
 
 // DownloadMediaResponse represents the response for the download media API

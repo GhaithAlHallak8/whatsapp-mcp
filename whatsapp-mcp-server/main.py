@@ -21,6 +21,9 @@ from whatsapp import (
     backfill_chat as whatsapp_backfill_chat,
 )
 from whatsapp import (
+    download_chat_media as whatsapp_download_chat_media,
+)
+from whatsapp import (
     download_media as whatsapp_download_media,
 )
 from whatsapp import (
@@ -540,6 +543,42 @@ def download_media(message_id: str, chat_jid: str) -> dict[str, Any]:
         return {"success": True, "message": "Media downloaded successfully", "file_path": file_path}
     else:
         return {"success": False, "message": detail or "Failed to download media"}
+
+
+@mcp.tool(annotations=LOCAL_WRITE_TOOL)
+@oauth.guarded("read")
+def download_chat_media(
+    chat_jid: str,
+    after: str | None = None,
+    before: str | None = None,
+    media_type: str = "image",
+    limit: int = 50,
+    recover_expired: bool = False,
+) -> dict[str, Any]:
+    """Download all media of one type from a chat in a date range, in one call.
+
+    Use this instead of calling download_media repeatedly, and instead of calling
+    the bridge directly, when you need many photos or files from a chat (for
+    example every photo from an event). Newest messages are downloaded first.
+
+    Args:
+        chat_jid: The chat to download from
+        after: ISO-8601 date string; only media sent after this
+        before: ISO-8601 date string; only media sent before this
+        media_type: "image" (default), "video", "audio", "document", "sticker" or "any"
+        limit: Maximum files to download in this call (default 50, max 200)
+        recover_expired: Old media that WhatsApp's servers no longer hold is skipped and listed
+            under failed by default. Set True to ask the user's phone to re-upload each such
+            file, which is slow (up to 20 seconds per file) and needs the phone online; prefer
+            calling download_media on the few files that matter.
+
+    Returns:
+        A dictionary with a summary message, total_matching, downloaded (message_id, timestamp,
+        sender, media_type, file_path) and failed (same fields with a reason).
+    """
+    return whatsapp_download_chat_media(
+        chat_jid, after=after, before=before, media_type=media_type, limit=limit, recover_expired=recover_expired
+    )
 
 
 @mcp.tool(annotations=READ_TOOL)
