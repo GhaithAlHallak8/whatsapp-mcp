@@ -803,6 +803,8 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				}
 				msgTimestamp := time.Unix(int64(ts), 0)
 
+				quotedMessageID, _, _ := extractQuotedMessageInfo(unwrapMessageContent(msg.Message.Message))
+
 				err = messageStore.StoreMessage(
 					msgID,
 					chatJID,
@@ -817,7 +819,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					fileSHA256,
 					fileEncSHA256,
 					fileLength,
-					"", // quoted_message_id: history sync does not carry ContextInfo
+					quotedMessageID,
 				)
 				if err != nil {
 					logger.Warnf("Failed to store history message: %v", err)
