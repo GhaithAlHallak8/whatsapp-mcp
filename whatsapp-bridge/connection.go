@@ -39,6 +39,9 @@ type connectionManager struct {
 	active         bool
 	stopped        bool
 	nextRetry      time.Time
+	staleSince     time.Time
+	staleGrace     time.Duration
+	isConnected    func() bool
 	ctx            context.Context
 	cancel         context.CancelFunc
 	wg             sync.WaitGroup
@@ -51,7 +54,7 @@ type connectionManager struct {
 
 func newConnectionManager(paired bool) *connectionManager {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &connectionManager{ctx: ctx, cancel: cancel, authTimeout: 45 * time.Second, status: connectionStatus{
+	return &connectionManager{ctx: ctx, cancel: cancel, authTimeout: 45 * time.Second, staleGrace: 10 * time.Second, status: connectionStatus{
 		State: "disconnected", Paired: paired, Message: "WhatsApp is disconnected.", UpdatedAt: time.Now().UTC(),
 	}}
 }
@@ -246,6 +249,27 @@ func (c *connectionManager) waitForAuthentication() {
 	}
 }
 
+func (c *connectionManager) checkSocket(now time.Time) {
+	if c.isConnected == nil {
+		return
+	}
+	alive := c.isConnected()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if alive || !c.status.Connected {
+		c.staleSince = time.Time{}
+		return
+	}
+	if c.staleSince.IsZero() {
+		c.staleSince = now
+		return
+	}
+	if now.Sub(c.staleSince) >= c.staleGrace {
+		c.staleSince = time.Time{}
+		c.setLocked("disconnected", "Lost the WhatsApp connection. Retrying shortly.", "socket_lost")
+	}
+}
+
 func (c *connectionManager) start() {
 	c.reconnect()
 	c.wg.Add(1)
@@ -257,7 +281,8 @@ func (c *connectionManager) start() {
 			select {
 			case <-c.ctx.Done():
 				return
-			case <-ticker.C:
+			case now := <-ticker.C:
+				c.checkSocket(now)
 				c.mu.Lock()
 				retry := c.status.Paired && (c.status.State == "disconnected" || c.status.State == "error") && !time.Now().Before(c.nextRetry)
 				c.mu.Unlock()

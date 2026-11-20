@@ -179,6 +179,52 @@ func TestKeepaliveFailureRestoresReconnectReadiness(t *testing.T) {
 		t.Fatal("keepalive recovery did not restore readiness")
 	}
 }
+func TestStaleConnectedStatusIsRetriedAfterSocketLoss(t *testing.T) {
+	c := newConnectionManager(true)
+	defer c.cancel()
+	alive := true
+	c.isConnected = func() bool { return alive }
+	c.handleEvent(&events.Disconnected{})
+	c.handleEvent(&events.Connected{})
+	start := time.Now()
+	c.checkSocket(start)
+	c.checkSocket(start.Add(time.Minute))
+	if !c.snapshot().Connected {
+		t.Fatal("live socket was marked lost")
+	}
+	alive = false
+	c.checkSocket(start)
+	c.checkSocket(start.Add(c.staleGrace - time.Second))
+	if !c.snapshot().Connected {
+		t.Fatal("socket marked lost before the grace period")
+	}
+	alive = true
+	c.checkSocket(start.Add(c.staleGrace))
+	alive = false
+	c.checkSocket(start.Add(c.staleGrace + time.Second))
+	if !c.snapshot().Connected {
+		t.Fatal("grace period did not restart after the socket recovered")
+	}
+	c.checkSocket(start.Add(2*c.staleGrace + time.Second))
+	state := c.snapshot()
+	if state.State != "disconnected" || state.LastError.Code != "socket_lost" {
+		t.Fatalf("state = %+v", state)
+	}
+	var attempts atomic.Int32
+	c.disconnect = func() {}
+	c.connect = func(context.Context) error {
+		attempts.Add(1)
+		alive = true
+		c.handleEvent(&events.Connected{})
+		return nil
+	}
+	c.reconnect()
+	waitConnection(t, c, "connected")
+	c.wg.Wait()
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d", attempts.Load())
+	}
+}
 func TestPairSuccessStillTimesOutAndCanRetryAuthentication(t *testing.T) {
 	c, codes, attempts := pairingFixture(t)
 	c.authTimeout = 10 * time.Millisecond
